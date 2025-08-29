@@ -154,13 +154,22 @@ async function sendMessage(message) {
   });
 }
 
-// Get the backend URL from environment or use a default
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+// Get the backend URL from environment or use the deployed Render URL
+const BACKEND_URL = 'https://vpn-extension-2.onrender.com';
 
 export async function connectViaBackground(proxy) {
   try {
     const url = new URL('/api/connect', BACKEND_URL).toString();
     console.log('Connecting to proxy:', proxy);
+    
+    // Prepare the request body
+    const requestBody = {
+      host: proxy.host,
+      port: parseInt(proxy.port, 10),
+      protocol: proxy.protocol || 'https'
+    };
+    
+    console.log('Sending request to backend:', url, requestBody);
     
     // First send the connect request to our backend
     const response = await fetch(url, {
