@@ -20,10 +20,11 @@
     "https://ipapi.co/*",
     "https://ipinfo.io/*",
     "https://www.proxy-list.download/*",
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "https://vpn-extension-2.onrender.com/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8000 https://api.ipify.org https://ipapi.co https://ipinfo.io https://www.proxy-list.download;"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8000 https://vpn-extension-2.onrender.com https://api.ipify.org https://ipapi.co https://ipinfo.io https://www.proxy-list.download;"
   },
   "background": {
     "service_worker": "background.js",

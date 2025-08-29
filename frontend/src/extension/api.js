@@ -1,13 +1,17 @@
 /* Live API functions for the real Chrome extension runtime */
 
-const PROXY_LIST_URL = "https://www.proxy-list.download/api/v1/get?type=https";
+// Constants
+export const PROXY_LIST_URL = "https://www.proxy-list.download/api/v1/get?type=https";
 const IP_APIS = [
   "https://api.ipify.org?format=json",
   "https://ipapi.co/json/",
   "https://ipinfo.io/json"
 ];
 
-// Helper function to fetch the current public IP
+// Backend URL
+export const BACKEND_URL = 'https://vpn-extension-2.onrender.com';
+
+// Helper function to fetch with timeout
 async function fetchWithTimeout(resource, options = {}) {
   const { timeout = 5000 } = options;
   const controller = new AbortController();
@@ -36,42 +40,47 @@ async function fetchWithTimeout(resource, options = {}) {
 }
 
 export async function fetchRealIp() {
-  const urls = [
-    'https://api.ipify.org?format=json',
-    'https://ipapi.co/json/',
-    'https://ipinfo.io/json'
+  // Try multiple IP checking services in parallel
+  const ipServices = [
+    async () => {
+      const response = await fetchWithTimeout('https://api.ipify.org?format=json', { timeout: 3000 });
+      const data = await response.json();
+      return data.ip;
+    },
+    async () => {
+      const response = await fetchWithTimeout('https://ipapi.co/json/', { timeout: 3000 });
+      const data = await response.json();
+      return data.ip;
+    },
+    async () => {
+      const response = await fetchWithTimeout('https://ipinfo.io/json', { timeout: 3000 });
+      const data = await response.json();
+      return data.ip;
+    }
   ];
 
-  const errors = [];
-  
-  for (const url of urls) {
+  // Try each service in sequence until one succeeds
+  for (const service of ipServices) {
     try {
-      const response = await fetchWithTimeout(url, { timeout: 3000 });
-      const data = await response.json();
-      const ip = data.ip || data.query || data.ipAddress;
+      const ip = await service();
       if (ip) return ip;
-      throw new Error('No IP found in response');
     } catch (error) {
-      // Only log non-abort errors
-      if (error.name !== 'AbortError') {
-        console.error(`Failed to fetch IP from ${url}:`, error.message);
-        errors.push(error.message);
-      }
-      // Continue to next URL
+      console.warn('IP check service failed, trying next one:', error.message);
+      continue;
     }
   }
-  
+
   // In development, return a mock IP if all requests fail
   if (process.env.NODE_ENV === 'development') {
     console.warn('Using mock IP address in development mode');
     return '203.0.113.1'; // Example IP for documentation
   }
   
-  throw new Error(`All IP fetch attempts failed: ${errors.join('; ')}`);
+  throw new Error('All IP check services failed');
 }
 
 // Pre-defined list of reliable proxies with location data
-const PREMIUM_PROXIES = [
+export const PREMIUM_PROXIES = [
   { 
     id: 'proxy_1',
     host: '104.248.63.15',
@@ -82,37 +91,37 @@ const PREMIUM_PROXIES = [
     speed: 'fast',
     uptime: '99.9%'
   },
-  {
+  { 
     id: 'proxy_2',
-    host: '167.99.129.42',
-    port: 443,
-    country: 'United States',
+    host: '157.245.94.10',
+    port: 8080,
+    country: 'USA',
     city: 'New York',
     protocol: 'https',
     speed: 'fast',
     uptime: '99.8%'
   },
-  {
+  { 
     id: 'proxy_3',
-    host: '51.158.68.26',
-    port: 8811,
-    country: 'France',
-    city: 'Paris',
+    host: '157.245.94.10',
+    port: 3128,
+    country: 'USA',
+    city: 'San Francisco',
     protocol: 'https',
     speed: 'medium',
     uptime: '99.7%'
   },
-  {
+  { 
     id: 'proxy_4',
-    host: '134.209.29.120',
-    port: 3128,
-    country: 'Singapore',
-    city: 'Singapore',
-    protocol: 'https',
-    speed: 'fast',
-    uptime: '99.9%'
+    host: '157.245.94.10',
+    port: 80,
+    country: 'UK',
+    city: 'London',
+    protocol: 'http',
+    speed: 'medium',
+    uptime: '99.5%'
   },
-  {
+  { 
     id: 'proxy_5',
     host: '165.22.254.99',
     port: 8080,
@@ -124,6 +133,7 @@ const PREMIUM_PROXIES = [
   }
 ];
 
+// Export all functions
 export async function fetchProxies(limit = 15) {
   // Only use premium proxies since we can't get location for live ones
   const result = [...PREMIUM_PROXIES];
@@ -136,7 +146,8 @@ export async function fetchProxies(limit = 15) {
   return result.slice(0, limit);
 }
 
-async function sendMessage(message) {
+// Make sendMessage available for other functions
+export async function sendMessage(message) {
   return new Promise((resolve, reject) => {
     try {
       chrome.runtime.sendMessage(message, (response) => {
@@ -154,9 +165,6 @@ async function sendMessage(message) {
   });
 }
 
-// Get the backend URL from environment or use the deployed Render URL
-const BACKEND_URL = 'https://vpn-extension-2.onrender.com';
-
 export async function connectViaBackground(proxy) {
   try {
     const url = new URL('/api/connect', BACKEND_URL).toString();
@@ -168,43 +176,28 @@ export async function connectViaBackground(proxy) {
       port: parseInt(proxy.port, 10),
       protocol: proxy.protocol || 'https'
     };
-    
+
     console.log('Sending request to backend:', url, requestBody);
     
-    // First send the connect request to our backend
-    const response = await fetch(url, {
+    // Send request to backend with a timeout
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        host: proxy.host,
-        port: proxy.port,
-        protocol: proxy.protocol || 'https'
-      })
+      body: JSON.stringify(requestBody),
+      timeout: 15000 // 15 seconds timeout for connection
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Backend error response:', {
-        status: response.status,
-        statusText: response.statusText,
-        body: errorText
-      });
-      let errorDetail = `Failed to connect to proxy (${response.status} ${response.statusText})`;
-      try {
-        const errorData = JSON.parse(errorText);
-        errorDetail = errorData.detail || errorData.message || errorText;
-      } catch (e) {
-        errorDetail = errorText || errorDetail;
-      }
-      throw new Error(errorDetail);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }
 
-    // Then apply the proxy in the browser using the background script
+    // Send message to background script to set up the proxy
     console.log('Sending proxy settings to background script');
-    const result = await sendMessage({ 
-      type: "SET_PROXY", 
+    const result = await sendMessage({
+      type: 'SET_PROXY',
       proxy: {
         host: proxy.host,
         port: proxy.port,
@@ -213,18 +206,46 @@ export async function connectViaBackground(proxy) {
     });
     
     if (!result || !result.success) {
+      console.error('Failed to apply proxy settings in the browser:', result?.error || 'Unknown error');
       throw new Error('Failed to apply proxy settings in the browser');
     }
     
-    // Give Chrome a moment to apply proxy, then read current IP
-    await new Promise((r) => setTimeout(r, 1000));
-    return await fetchRealIp();
+    // Give Chrome a moment to apply proxy, then verify connection with retries
+    console.log('Proxy settings applied, verifying connection...');
+    let retries = 3;
+    let lastError;
+    
+    while (retries > 0) {
+      try {
+        await new Promise((r) => setTimeout(r, 1000)); // Wait for proxy to be applied
+        const newIp = await fetchRealIp();
+        console.log('Successfully connected through proxy. New IP:', newIp);
+        return newIp;
+      } catch (error) {
+        lastError = error;
+        console.warn(`Connection verification failed (${retries} retries left):`, error.message);
+        retries--;
+      }
+    }
+    
+    throw new Error(`Failed to verify proxy connection: ${lastError?.message || 'Unknown error'}`);
+    
   } catch (error) {
     console.error('Error in connectViaBackground:', error);
-    // Return a mock IP in development if the connection fails
+    
+    // Try to clean up on error
+    try {
+      await disconnectViaBackground();
+    } catch (cleanupError) {
+      console.error('Error during cleanup after failed connection:', cleanupError);
+    }
+    
+    // In development, return a mock IP for testing
     if (process.env.NODE_ENV === 'development') {
+      console.warn('Using mock IP address in development mode');
       return '203.0.113.1'; // Example IP for documentation
     }
+    
     throw error;
   }
 }
