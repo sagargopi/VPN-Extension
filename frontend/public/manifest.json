@@ -11,13 +11,20 @@
     "proxy",
     "storage",
     "tabs",
+    "webRequest",
     "scripting"
   ],
   "host_permissions": [
     "<all_urls>",
     "https://api.ipify.org/*",
-    "https://www.proxy-list.download/*"
+    "https://ipapi.co/*",
+    "https://ipinfo.io/*",
+    "https://www.proxy-list.download/*",
+    "http://localhost:8000/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8000 https://api.ipify.org https://ipapi.co https://ipinfo.io https://www.proxy-list.download;"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"

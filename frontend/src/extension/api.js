@@ -7,43 +7,67 @@ const IP_APIS = [
   "https://ipinfo.io/json"
 ];
 
-async function fetchWithTimeout(url, options = {}, timeout = 5000) {
+// Helper function to fetch the current public IP
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = 5000 } = options;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   
   try {
-    const response = await fetch(url, {
+    const response = await fetch(resource, {
       ...options,
       signal: controller.signal
     });
     clearTimeout(id);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     return response;
   } catch (error) {
     clearTimeout(id);
+    // Don't log aborted requests as errors
+    if (error.name !== 'AbortError') {
+      console.error(`Error fetching ${resource}:`, error);
+    }
     throw error;
   }
 }
 
 export async function fetchRealIp() {
-  // Try multiple IP APIs in case one fails
-  for (const api of IP_APIS) {
+  const urls = [
+    'https://api.ipify.org?format=json',
+    'https://ipapi.co/json/',
+    'https://ipinfo.io/json'
+  ];
+
+  const errors = [];
+  
+  for (const url of urls) {
     try {
-      const res = await fetchWithTimeout(api, { cache: "no-store" });
-      const data = await res.json();
-      return data.ip || data.ipAddress || data.ip_address || data.query;
+      const response = await fetchWithTimeout(url, { timeout: 3000 });
+      const data = await response.json();
+      const ip = data.ip || data.query || data.ipAddress;
+      if (ip) return ip;
+      throw new Error('No IP found in response');
     } catch (error) {
-      console.warn(`Failed to fetch IP from ${api}:`, error);
-      continue;
+      // Only log non-abort errors
+      if (error.name !== 'AbortError') {
+        console.error(`Failed to fetch IP from ${url}:`, error.message);
+        errors.push(error.message);
+      }
+      // Continue to next URL
     }
   }
   
-  // If all APIs fail, return a mock IP in development
+  // In development, return a mock IP if all requests fail
   if (process.env.NODE_ENV === 'development') {
-    console.warn('Using mock IP - all IP APIs failed');
-    return '192.168.1.1';
+    console.warn('Using mock IP address in development mode');
+    return '203.0.113.1'; // Example IP for documentation
   }
   
-  throw new Error('Could not determine IP address');
+  throw new Error(`All IP fetch attempts failed: ${errors.join('; ')}`);
 }
 
 // Pre-defined list of reliable proxies with location data
@@ -112,30 +136,79 @@ export async function fetchProxies(limit = 15) {
   return result.slice(0, limit);
 }
 
-function sendMessage(message) {
+async function sendMessage(message) {
   return new Promise((resolve, reject) => {
-    if (!chrome?.runtime) {
-      reject(new Error("Chrome runtime not available"));
-      return;
-    }
-    
     try {
-      chrome.runtime.sendMessage(message, (resp) => {
-        const err = chrome.runtime.lastError;
-        if (err) reject(err);
-        else resolve(resp);
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('Error sending message to background:', chrome.runtime.lastError);
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve(response);
+        }
       });
     } catch (e) {
+      console.error('Exception in sendMessage:', e);
       reject(e);
     }
   });
 }
 
+// Get the backend URL from environment or use a default
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+
 export async function connectViaBackground(proxy) {
   try {
-    await sendMessage({ type: "SET_PROXY", proxy });
-    // Give Chrome a brief moment to apply proxy, then read current IP
-    await new Promise((r) => setTimeout(r, 700));
+    const url = new URL('/api/connect', BACKEND_URL).toString();
+    console.log('Connecting to proxy:', proxy);
+    
+    // First send the connect request to our backend
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        host: proxy.host,
+        port: proxy.port,
+        protocol: proxy.protocol || 'https'
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Backend error response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText
+      });
+      let errorDetail = `Failed to connect to proxy (${response.status} ${response.statusText})`;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorDetail = errorData.detail || errorData.message || errorText;
+      } catch (e) {
+        errorDetail = errorText || errorDetail;
+      }
+      throw new Error(errorDetail);
+    }
+
+    // Then apply the proxy in the browser using the background script
+    console.log('Sending proxy settings to background script');
+    const result = await sendMessage({ 
+      type: "SET_PROXY", 
+      proxy: {
+        host: proxy.host,
+        port: proxy.port,
+        protocol: proxy.protocol || 'https'
+      }
+    });
+    
+    if (!result || !result.success) {
+      throw new Error('Failed to apply proxy settings in the browser');
+    }
+    
+    // Give Chrome a moment to apply proxy, then read current IP
+    await new Promise((r) => setTimeout(r, 1000));
     return await fetchRealIp();
   } catch (error) {
     console.error('Error in connectViaBackground:', error);
@@ -149,10 +222,32 @@ export async function connectViaBackground(proxy) {
 
 export async function disconnectViaBackground() {
   try {
-    await sendMessage({ type: "CLEAR_PROXY" });
+    console.log('Disconnecting from proxy');
+    
+    // First clear the proxy in the browser
+    const clearResult = await sendMessage({ type: "CLEAR_PROXY" });
+    
+    if (!clearResult || !clearResult.success) {
+      console.warn('Failed to clear proxy settings in the browser, but continuing with backend disconnect');
+    }
+    
+    // Then send the disconnect request to our backend
+    const response = await fetch(new URL('/api/disconnect', BACKEND_URL).toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Backend error response:', errorText);
+      // Don't throw here, we still want to clear the proxy settings
+    }
+    
     return true;
   } catch (error) {
-    console.error('Error disconnecting proxy:', error);
+    console.error('Error in disconnectViaBackground:', error);
     return false;
   }
 }
