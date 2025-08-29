@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Anslation VPN Extension",
+  "version": "0.1.0",
+  "description": "Connect/Disconnect via public HTTPS proxies. Shows real and masked IP.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Anslation VPN"
+  },
+  "permissions": [
+    "proxy",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.ipify.org/*",
+    "https://www.proxy-list.download/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
